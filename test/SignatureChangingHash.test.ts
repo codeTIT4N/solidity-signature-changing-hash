@@ -1,6 +1,6 @@
 import { loadFixture } from "@nomicfoundation/hardhat-network-helpers";
 import { expect } from "chai";
-import { ethers } from "hardhat";
+import { ethers, network } from "hardhat";
 
 describe("SignatureChangingHash contract tests", function () {
   function toBN(_num: number) {
@@ -44,10 +44,18 @@ describe("SignatureChangingHash contract tests", function () {
     });
     it("referenceTimestamp should be set to deploy timestamp", async function () {
       const { contract } = await loadFixture(deployContract);
-      console.log(await contract.referenceTimestamp());
-      const num = contract.deployTransaction.blockNumber;
-      const block = (await ethers.provider.getBlock(num)).timestamp;
-      console.log(block);
+      const blockNumber = contract.deployTransaction.blockNumber;
+      const block = await ethers.provider.getBlock(blockNumber!);
+      expect(await contract.referenceTimestamp()).to.equal(block.timestamp);
+    });
+    it("nonce should be set to 0", async function () {
+      const { contract } = await loadFixture(deployContract);
+      expect(await contract.nonce()).to.equal(0);
+    });
+    it("chainId should be set to the correct chain Id", async function () {
+      const { contract } = await loadFixture(deployContract);
+      expect(await contract.chainId()).to.equal(network.config.chainId);
     });
   });
+  describe("Contract tests", function () {}); // @todo
 });

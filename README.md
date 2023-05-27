@@ -1,4 +1,6 @@
-# hardhat-ts
+# solidity-signature-example
+
+Signature verification example in solidity with changing hash every 2 minutes for more security.
 
 ### Hardhat commands
 
