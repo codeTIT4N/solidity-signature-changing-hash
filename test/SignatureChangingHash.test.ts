@@ -57,7 +57,7 @@ describe("SignatureChangingHash contract tests", function () {
       expect(await contract.chainId()).to.equal(network.config.chainId);
     });
   });
-  describe("Functionality tests", function () {
+  describe("Hash generation", function () {
     it("getHashTimestamp(): Should return the same value as the reference timestamp in the beginning", async function () {
       const { contract } = await loadFixture(deployContract);
       expect(await contract.getHashTimestamp()).to.equal(
@@ -136,6 +136,124 @@ describe("SignatureChangingHash contract tests", function () {
       await network.provider.send("evm_mine");
       const hash2 = await contract.getHash();
       expect(hash).to.not.equal(hash2);
+    });
+  });
+  describe("Signature verification", function () {
+    it("getSigner(): should return the correct signer if the hash has not been changed", async function () {
+      const { contract, owner } = await loadFixture(deployContract);
+      const hash = await contract.getHash();
+      const signature = await owner.signMessage(ethers.utils.arrayify(hash));
+      expect(await contract.getSigner(signature)).to.equal(owner.address);
+    });
+    it("getSigner(): Previous signature should not return right signer after 2 minutes", async function () {
+      const { contract, owner } = await loadFixture(deployContract);
+      const hash = await contract.getHash();
+      const signature = await owner.signMessage(ethers.utils.arrayify(hash));
+      // increase time by 2 minutes
+      await network.provider.send("evm_increaseTime", [120]);
+      await network.provider.send("evm_mine");
+      expect(await contract.getSigner(signature)).to.not.equal(owner.address);
+    });
+    it("getSigner(): should return the correct signer if the hash has been changed and correct hash is signed", async function () {
+      const { contract, owner } = await loadFixture(deployContract);
+      const hash = await contract.getHash();
+      // increase time by 2 minutes
+      await network.provider.send("evm_increaseTime", [120]);
+      await network.provider.send("evm_mine");
+      const hash2 = await contract.getHash();
+      expect(hash).to.not.equal(hash2);
+      const signature = await owner.signMessage(ethers.utils.arrayify(hash2));
+      expect(await contract.getSigner(signature)).to.equal(owner.address);
+    });
+    it("verifySigner(): Should return true if signer since the signer will be right in first 2 minutes", async function () {
+      const { contract, owner } = await loadFixture(deployContract);
+      const hash = await contract.getHash();
+      const signature = await owner.signMessage(ethers.utils.arrayify(hash));
+      expect(await contract.verifySigner(signature)).to.equal(true);
+      // same test after 1 minute
+      await network.provider.send("evm_increaseTime", [60]);
+      await network.provider.send("evm_mine");
+      expect(await contract.verifySigner(signature)).to.equal(true);
+    });
+    it("verifySigner(): Should return false if signer since the signer will be wrong after 2 minutes", async function () {
+      const { contract, owner } = await loadFixture(deployContract);
+      const hash = await contract.getHash();
+      const signature = await owner.signMessage(ethers.utils.arrayify(hash));
+      // increase time by 2 minutes
+      await network.provider.send("evm_increaseTime", [120]);
+      await network.provider.send("evm_mine");
+      expect(await contract.verifySigner(signature)).to.equal(false);
+    });
+    it("simulateTxn(): Should revert if signer is wrong", async function () {
+      const { contract, A } = await loadFixture(deployContract);
+      const hash = await contract.getHash();
+      const signature = await A.signMessage(ethers.utils.arrayify(hash));
+      await expect(contract.simulateTxn(signature)).to.be.revertedWith(
+        "SignatureChangingHash: Invalid Signature"
+      );
+    });
+    it("simulateTxn(): Should revert if signer is right but the hash is invalid after 2 minutes", async function () {
+      const { contract, owner } = await loadFixture(deployContract);
+      const hash = await contract.getHash();
+      // increase time by 2 minutes
+      await network.provider.send("evm_increaseTime", [120]);
+      await network.provider.send("evm_mine");
+      const hash2 = await contract.getHash();
+      expect(hash).to.not.equal(hash2);
+      const signature = await owner.signMessage(ethers.utils.arrayify(hash));
+      await expect(contract.simulateTxn(signature)).to.be.revertedWith(
+        "SignatureChangingHash: Invalid Signature"
+      );
+    });
+    it("simulateTxn(): Should execute if the signer is right and the hash is valid and mark the hash as executed in the mapping", async function () {
+      const { contract, owner } = await loadFixture(deployContract);
+      const hash = await contract.getHash();
+      const signature = await owner.signMessage(ethers.utils.arrayify(hash));
+      await contract.simulateTxn(signature);
+      expect(await contract.executed(hash)).to.equal(true);
+    });
+    it("simulateTxn(): Successful transaction should update the nonce and change the current hash", async function () {
+      const { contract, owner } = await loadFixture(deployContract);
+      const hash = await contract.getHash();
+      const signature = await owner.signMessage(ethers.utils.arrayify(hash));
+      await contract.simulateTxn(signature);
+      expect(await contract.nonce()).to.equal(1);
+      const hash2 = await contract.getHash();
+      expect(hash).to.not.equal(hash2);
+    });
+    it("simulateTxn(): referenceTimestamp should be updated after successful transaction to the last hash timestamp", async function () {
+      const { contract, owner } = await loadFixture(deployContract);
+      const oldHashTimestamp = await contract.getHashTimestamp();
+      expect(await contract.referenceTimestamp()).to.equal(oldHashTimestamp);
+      // increase time by 2 minutes - change the hash
+      await network.provider.send("evm_increaseTime", [120]);
+      await network.provider.send("evm_mine");
+      const signature = await owner.signMessage(
+        ethers.utils.arrayify(await contract.getHash())
+      );
+      await contract.simulateTxn(signature);
+      expect(await contract.referenceTimestamp()).to.not.equal(
+        oldHashTimestamp
+      );
+    });
+    it("simulateTxn(): Should work after updating the referenceTimestamp", async function () {
+      const { contract, owner } = await loadFixture(deployContract);
+      const oldHashTimestamp = await contract.getHashTimestamp();
+      expect(await contract.referenceTimestamp()).to.equal(oldHashTimestamp);
+      // increase time by 2 minutes - change the hash
+      await network.provider.send("evm_increaseTime", [120]);
+      await network.provider.send("evm_mine");
+      const signature = await owner.signMessage(
+        ethers.utils.arrayify(await contract.getHash())
+      );
+      await contract.simulateTxn(signature);
+      expect(await contract.referenceTimestamp()).to.not.equal(
+        oldHashTimestamp
+      );
+      const hash = await contract.getHash();
+      const signature2 = await owner.signMessage(ethers.utils.arrayify(hash));
+      await contract.simulateTxn(signature2);
+      expect(await contract.nonce()).to.equal(2);
     });
   });
 });
